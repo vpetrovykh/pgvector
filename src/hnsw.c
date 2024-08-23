@@ -109,8 +109,6 @@ hnswcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	int			entryLevel;
 	Relation	index;
 
-	elog(INFO, "path->indexorderbys is null: %d", path->indexorderbys == NULL);
-
 	/* Never use index without order */
 	if (path->indexorderbys == NULL)
 	{
@@ -118,7 +116,7 @@ hnswcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 		*indexTotalCost = DBL_MAX;
 		*indexSelectivity = 0;
 		*indexCorrelation = 0;
-		*indexPages = 0;
+		*indexPages = path->indexinfo->pages;
 		return;
 	}
 
