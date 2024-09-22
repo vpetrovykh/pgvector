@@ -43,6 +43,7 @@
 #define IVFFLAT_MIN_LISTS		1
 #define IVFFLAT_MAX_LISTS		32768
 #define IVFFLAT_DEFAULT_PROBES	1
+#define IVFFLAT_DEFAULT_STREAMING	false
 
 /* Build phases */
 /* PROGRESS_CREATEIDX_SUBPHASE_INITIALIZE is 1 */
@@ -80,6 +81,8 @@
 
 /* Variables */
 extern int	ivfflat_probes;
+extern int	ivfflat_max_probes;
+extern bool ivfflat_streaming;
 
 typedef struct VectorArrayData
 {
@@ -247,8 +250,10 @@ typedef struct IvfflatScanOpaqueData
 {
 	const		IvfflatTypeInfo *typeInfo;
 	int			probes;
+	int			maxProbes;
 	int			dimensions;
 	bool		first;
+	Datum		value;
 
 	/* Sorting */
 	Tuplesortstate *sortstate;
@@ -265,6 +270,8 @@ typedef struct IvfflatScanOpaqueData
 
 	/* Lists */
 	pairingheap *listQueue;
+	BlockNumber *startPages;
+	int			currentIndex;
 	IvfflatScanList lists[FLEXIBLE_ARRAY_MEMBER];	/* must come last */
 }			IvfflatScanOpaqueData;
 
