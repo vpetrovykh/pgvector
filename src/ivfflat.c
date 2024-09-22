@@ -96,7 +96,8 @@ EstimateProbes(PlannerInfo *root, IndexPath *path, int lists)
 	if (tuplesPerList == 0)
 		return lists;
 
-	return Min(root->limit_tuples / tuplesPerList, lists);
+	/* No need to cap at this point */
+	return root->limit_tuples / tuplesPerList;
 }
 
 /*
