@@ -78,7 +78,7 @@ GetScanLists(IndexScanDesc scan, Datum value)
 				pairingheap_add(so->listQueue, &scanlist->ph_node);
 
 				/* Calculate max distance */
-				if (listCount == so->probes)
+				if (listCount == so->maxProbes)
 					maxDistance = GetScanList(pairingheap_first(so->listQueue))->distance;
 			}
 			else if (distance < maxDistance)
