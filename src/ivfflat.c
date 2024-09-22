@@ -92,8 +92,11 @@ EstimateProbes(PlannerInfo *root, IndexPath *path, int lists)
 			selectivity *= rinfo->norm_selec;
 	}
 
-	tuplesPerList = path->indexinfo->tuples / (double) lists;
-	return root->limit_tuples / (tuplesPerList * selectivity);
+	tuplesPerList = path->indexinfo->tuples * selectivity / (double) lists;
+	if (tuplesPerList == 0)
+		return lists;
+
+	return root->limit_tuples / tuplesPerList;
 }
 
 /*
