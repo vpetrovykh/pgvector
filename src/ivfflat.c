@@ -36,8 +36,8 @@ IvfflatInit(void)
 							IVFFLAT_DEFAULT_PROBES, IVFFLAT_MIN_LISTS, IVFFLAT_MAX_LISTS, PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomIntVariable("ivfflat.max_probes", "Sets the max number of probes for iterative scans",
-							NULL, &ivfflat_max_probes,
-							-1, IVFFLAT_MIN_LISTS, IVFFLAT_MAX_LISTS, PGC_USERSET, 0, NULL, NULL, NULL);
+							"Zero sets to the number of lists", &ivfflat_max_probes,
+							0, 0, IVFFLAT_MAX_LISTS, PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable("ivfflat.streaming", "Use streaming mode",
 							 NULL, &ivfflat_streaming,
@@ -138,7 +138,7 @@ ivfflatcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	{
 		probes = Max(probes, EstimateProbes(root, path, lists));
 
-		if (ivfflat_max_probes != -1)
+		if (ivfflat_max_probes != 0)
 			probes = Min(probes, ivfflat_max_probes);
 	}
 
