@@ -267,7 +267,7 @@ ivfflatbeginscan(Relation index, int nkeys, int norderbys)
 		if (ivfflat_max_probes == 0)
 			maxProbes = lists;
 		else
-			maxProbes = Max(Min(ivfflat_max_probes, lists), probes);
+			maxProbes = Min(ivfflat_max_probes, lists);
 	}
 	else
 		maxProbes = probes;
