@@ -134,6 +134,7 @@ ivfflatcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	index_close(index, NoLock);
 
 	probes = ivfflat_probes;
+	/* TODO Separate startup and total cost */
 	if (ivfflat_streaming)
 	{
 		probes = Max(probes, EstimateProbes(root, path, lists));
