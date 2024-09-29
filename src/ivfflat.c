@@ -68,39 +68,6 @@ ivfflatbuildphasename(int64 phasenum)
 }
 
 /*
- * Estimate the number of probes for iterative scans
- */
-static int
-EstimateProbes(PlannerInfo *root, IndexPath *path, int lists)
-{
-	double		selectivity = 1;
-	ListCell   *lc;
-	double		tuplesPerList;
-
-	/* Cannot estimate without limit */
-	/* limit_tuples includes offset */
-	if (root->limit_tuples < 0)
-		return 0;
-
-	/* Get the selectivity of non-index conditions */
-	foreach(lc, path->indexinfo->indrestrictinfo)
-	{
-		RestrictInfo *rinfo = lfirst(lc);
-
-		/* Skip DEFAULT_INEQ_SEL since it may be a distance filter */
-		if (rinfo->norm_selec >= 0 && rinfo->norm_selec <= 1 && rinfo->norm_selec != (Selectivity) DEFAULT_INEQ_SEL)
-			selectivity *= rinfo->norm_selec;
-	}
-
-	tuplesPerList = path->indexinfo->tuples * selectivity / (double) lists;
-	if (tuplesPerList == 0)
-		return lists;
-
-	/* No need to cap at this point */
-	return root->limit_tuples / tuplesPerList;
-}
-
-/*
  * Estimate the cost of an index scan
  */
 static void
@@ -111,8 +78,8 @@ ivfflatcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 {
 	GenericCosts costs;
 	int			lists;
-	int			probes;
 	double		ratio;
+	double		startupPages;
 	double		spc_seq_page_cost;
 	Relation	index;
 
@@ -129,53 +96,39 @@ ivfflatcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 
 	MemSet(&costs, 0, sizeof(costs));
 
+	genericcostestimate(root, path, loop_count, &costs);
+
 	index = index_open(path->indexinfo->indexoid, NoLock);
 	IvfflatGetMetaPageInfo(index, &lists, NULL);
 	index_close(index, NoLock);
 
-	probes = ivfflat_probes;
-	/* TODO Separate startup and total cost */
-	if (ivfflat_streaming)
-	{
-		probes = Max(probes, EstimateProbes(root, path, lists));
-
-		if (ivfflat_max_probes != 0)
-			probes = Min(probes, ivfflat_max_probes);
-	}
-
 	/* Get the ratio of lists that we need to visit */
-	ratio = ((double) probes) / lists;
+	ratio = ((double) ivfflat_probes) / lists;
 	if (ratio > 1.0)
 		ratio = 1.0;
 
-	/*
-	 * This gives us the subset of tuples to visit. This value is passed into
-	 * the generic cost estimator to determine the number of pages to visit
-	 * during the index scan.
-	 */
-	costs.numIndexTuples = path->indexinfo->tuples * ratio;
-
-	genericcostestimate(root, path, loop_count, &costs);
+	/* Set startup cost since this work happens before first tuple is returned */
+	costs.indexStartupCost = costs.indexTotalCost * ratio;
+	startupPages = costs.numIndexPages * ratio;
 
 	get_tablespace_page_costs(path->indexinfo->reltablespace, NULL, &spc_seq_page_cost);
 
 	/* Adjust cost if needed since TOAST not included in seq scan cost */
-	if (costs.numIndexPages > path->indexinfo->rel->pages && ratio < 0.5)
+	if (startupPages > path->indexinfo->rel->pages && ratio < 0.5)
 	{
 		/* Change all page cost from random to sequential */
-		costs.indexTotalCost -= costs.numIndexPages * (costs.spc_random_page_cost - spc_seq_page_cost);
+		costs.indexStartupCost -= startupPages * (costs.spc_random_page_cost - spc_seq_page_cost);
 
 		/* Remove cost of extra pages */
-		costs.indexTotalCost -= (costs.numIndexPages - path->indexinfo->rel->pages) * spc_seq_page_cost;
+		costs.indexStartupCost -= (startupPages - path->indexinfo->rel->pages) * spc_seq_page_cost;
 	}
 	else
 	{
 		/* Change some page cost from random to sequential */
-		costs.indexTotalCost -= 0.5 * costs.numIndexPages * (costs.spc_random_page_cost - spc_seq_page_cost);
+		costs.indexStartupCost -= 0.5 * startupPages * (costs.spc_random_page_cost - spc_seq_page_cost);
 	}
 
-	/* Use total cost since most work happens before first tuple is returned */
-	*indexStartupCost = costs.indexTotalCost;
+	*indexStartupCost = costs.indexStartupCost;
 	*indexTotalCost = costs.indexTotalCost;
 	*indexSelectivity = costs.indexSelectivity;
 	*indexCorrelation = costs.indexCorrelation;
