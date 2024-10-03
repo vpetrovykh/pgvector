@@ -27,6 +27,13 @@ typedef struct SparseInputElement
 	float		value;
 }			SparseInputElement;
 
+typedef struct ParsedSparseVector
+{
+	SparseInputElement *elements;
+	long		dim;
+	int			nnz;
+}			ParsedSparseVector;
+
 /*
  * Ensure same dimensions
  */
@@ -186,22 +193,19 @@ CompareIndices(const void *a, const void *b)
 }
 
 /*
- * Convert textual representation to internal representation
+ * Convert internal representation to textual representation (SQL text)
  */
-FUNCTION_PREFIX PG_FUNCTION_INFO_V1(sparsevec_in);
-Datum
-sparsevec_in(PG_FUNCTION_ARGS)
+static inline ParsedSparseVector *
+char_to_sparsevec(char *lit, int index_offset)
 {
-	char	   *lit = PG_GETARG_CSTRING(0);
-	int32		typmod = PG_GETARG_INT32(2);
-	long		dim;
 	char	   *pt = lit;
 	char	   *stringEnd;
-	SparseVector *result;
 	float	   *rvalues;
+	long 		dim;
+	int 		nnz = 0;
 	SparseInputElement *elements;
 	int			maxNnz;
-	int			nnz = 0;
+	ParsedSparseVector *sv;
 
 	maxNnz = 1;
 	while (*pt != '\0')
@@ -217,6 +221,7 @@ sparsevec_in(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 				 errmsg("sparsevec cannot have more than %d non-zero elements", SPARSEVEC_MAX_NNZ)));
 
+	sv = palloc(sizeof(ParsedSparseVector));
 	elements = palloc(maxNnz * sizeof(SparseInputElement));
 
 	pt = lit;
@@ -309,8 +314,8 @@ sparsevec_in(PG_FUNCTION_ARGS)
 			/* Do not store zero values */
 			if (value != 0)
 			{
-				/* Convert 1-based numbering (SQL) to 0-based (C) */
-				elements[nnz].index = index - 1;
+				/* Potentially convert 1-based numbering (SQL) to 0-based (C) */
+				elements[nnz].index = index - index_offset;
 				elements[nnz].value = value;
 				nnz++;
 			}
@@ -375,20 +380,74 @@ sparsevec_in(PG_FUNCTION_ARGS)
 				 errdetail("Junk after closing.")));
 
 	CheckDim(dim);
-	CheckExpectedDim(typmod, dim);
 
-	qsort(elements, nnz, sizeof(SparseInputElement), CompareIndices);
+	sv->elements = elements;
+	sv->dim = dim;
+	sv->nnz = nnz;
+	return sv;
+}
 
-	result = InitSparseVector(dim, nnz);
+/*
+ * Convert textual representation to internal representation
+ */
+FUNCTION_PREFIX PG_FUNCTION_INFO_V1(sparsevec_in);
+Datum
+sparsevec_in(PG_FUNCTION_ARGS)
+{
+	char	   *lit = PG_GETARG_CSTRING(0);
+	int32		typmod = PG_GETARG_INT32(2);
+	SparseVector *result;
+	float	   *rvalues;
+	ParsedSparseVector *sv;
+
+	/* Convert 0-based numbering (C) to 1-based (SQL) */
+	sv = char_to_sparsevec(lit, 1);
+	CheckExpectedDim(typmod, sv->dim);
+
+	qsort(sv->elements, sv->nnz, sizeof(SparseInputElement), CompareIndices);
+
+	result = InitSparseVector(sv->dim, sv->nnz);
 	rvalues = SPARSEVEC_VALUES(result);
-	for (int i = 0; i < nnz; i++)
+	for (int i = 0; i < sv->nnz; i++)
 	{
-		result->indices[i] = elements[i].index;
-		rvalues[i] = elements[i].value;
+		result->indices[i] = sv->elements[i].index;
+		rvalues[i] = sv->elements[i].value;
 
-		CheckIndex(result->indices, i, dim);
+		CheckIndex(result->indices, i, sv->dim);
 	}
 
+	pfree(sv);
+	PG_RETURN_POINTER(result);
+}
+
+/*
+ * Convert textual representation to sparsevec
+ */
+FUNCTION_PREFIX PG_FUNCTION_INFO_V1(text_to_sparsevec);
+Datum
+text_to_sparsevec(PG_FUNCTION_ARGS)
+{
+	char 		*lit = text_to_cstring(PG_GETARG_TEXT_PP(0));
+	float	   	*rvalues;
+	SparseVector *result;
+	ParsedSparseVector *sv;
+
+	/* Convert to text using internal indexes as is */
+	sv = char_to_sparsevec(lit, 0);
+
+	qsort(sv->elements, sv->nnz, sizeof(SparseInputElement), CompareIndices);
+
+	result = InitSparseVector(sv->dim, sv->nnz);
+	rvalues = SPARSEVEC_VALUES(result);
+	for (int i = 0; i < sv->nnz; i++)
+	{
+		result->indices[i] = sv->elements[i].index;
+		rvalues[i] = sv->elements[i].value;
+
+		CheckIndex(result->indices, i, sv->dim);
+	}
+
+	pfree(sv);
 	PG_RETURN_POINTER(result);
 }
 
@@ -407,13 +466,11 @@ sparsevec_in(PG_FUNCTION_ARGS)
 #endif
 
 /*
- * Convert internal representation to textual representation
+ * Convert internal representation to textual representation (SQL text)
  */
-FUNCTION_PREFIX PG_FUNCTION_INFO_V1(sparsevec_out);
-Datum
-sparsevec_out(PG_FUNCTION_ARGS)
+static inline char *
+sparsevec_to_char(SparseVector *sparsevec, int index_offset)
 {
-	SparseVector *sparsevec = PG_GETARG_SPARSEVEC_P(0);
 	float	   *values = SPARSEVEC_VALUES(sparsevec);
 	char	   *buf;
 	char	   *ptr;
@@ -444,8 +501,8 @@ sparsevec_out(PG_FUNCTION_ARGS)
 		if (i > 0)
 			AppendChar(ptr, ',');
 
-		/* Convert 0-based numbering (C) to 1-based (SQL) */
-		AppendInt(ptr, sparsevec->indices[i] + 1);
+		/* Potentially convert 0-based numbering (C) to 1-based (SQL) */
+		AppendInt(ptr, sparsevec->indices[i] + index_offset);
 		AppendChar(ptr, ':');
 		AppendFloat(ptr, values[i]);
 	}
@@ -455,8 +512,42 @@ sparsevec_out(PG_FUNCTION_ARGS)
 	AppendInt(ptr, sparsevec->dim);
 	*ptr = '\0';
 
+	return buf;
+}
+
+/*
+ * Convert internal representation to textual representation
+ */
+FUNCTION_PREFIX PG_FUNCTION_INFO_V1(sparsevec_out);
+Datum
+sparsevec_out(PG_FUNCTION_ARGS)
+{
+	SparseVector *sparsevec = PG_GETARG_SPARSEVEC_P(0);
+	char	   	*buf;
+
+	/* Convert 0-based numbering (C) to 1-based (SQL) */
+	buf = sparsevec_to_char(sparsevec, 1);
 	PG_FREE_IF_COPY(sparsevec, 0);
 	PG_RETURN_CSTRING(buf);
+}
+
+/*
+ * Convert internal representation to textual representation (SQL text)
+ */
+FUNCTION_PREFIX PG_FUNCTION_INFO_V1(sparsevec_to_text);
+Datum
+sparsevec_to_text(PG_FUNCTION_ARGS)
+{
+	SparseVector *sparsevec = PG_GETARG_SPARSEVEC_P(0);
+	char	   	*buf;
+	text 		*stext;
+
+	/* Convert to text using internal indexes as is */
+	buf = sparsevec_to_char(sparsevec, 0);
+	PG_FREE_IF_COPY(sparsevec, 0);
+	stext = cstring_to_text(buf);
+	pfree(buf);
+	PG_RETURN_TEXT_P(stext);
 }
 
 /*
@@ -512,6 +603,65 @@ sparsevec_recv(PG_FUNCTION_ARGS)
 	CheckDim(dim);
 	CheckNnz(nnz, dim);
 	CheckExpectedDim(typmod, dim);
+
+	if (unused != 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("expected unused to be 0, not %d", unused)));
+
+	result = InitSparseVector(dim, nnz);
+	values = SPARSEVEC_VALUES(result);
+
+	/* Binary representation uses zero-based numbering for indices */
+	for (int i = 0; i < nnz; i++)
+	{
+		result->indices[i] = pq_getmsgint(buf, sizeof(int32));
+		CheckIndex(result->indices, i, dim);
+	}
+
+	for (int i = 0; i < nnz; i++)
+	{
+		values[i] = pq_getmsgfloat4(buf);
+		CheckElement(values[i]);
+
+		if (values[i] == 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_DATA_EXCEPTION),
+					 errmsg("binary representation of sparsevec cannot contain zero values")));
+	}
+
+	PG_RETURN_POINTER(result);
+}
+
+/*
+ * Convert bytea representation to subvector
+ */
+FUNCTION_PREFIX PG_FUNCTION_INFO_V1(bytea_to_sparsevec);
+Datum
+bytea_to_sparsevec(PG_FUNCTION_ARGS)
+{
+
+	bytea* raw = PG_GETARG_BYTEA_PP(0);
+	StringInfo	buf = makeStringInfo();
+	SparseVector *result;
+	int32		dim;
+	int32		nnz;
+	int32		unused;
+	float	   *values;
+
+	/*
+	 * Copy the bytea data into StringInfo, so we can process it just like
+	 * sparsevec_recv
+	 */
+	buf->len = buf->maxlen = VARSIZE_ANY(raw);
+	buf->data = VARDATA_ANY(raw);
+
+	dim = pq_getmsgint(buf, sizeof(int32));
+	nnz = pq_getmsgint(buf, sizeof(int32));
+	unused = pq_getmsgint(buf, sizeof(int32));
+
+	CheckDim(dim);
+	CheckNnz(nnz, dim);
 
 	if (unused != 0)
 		ereport(ERROR,

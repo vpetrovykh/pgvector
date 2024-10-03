@@ -408,6 +408,46 @@ halfvec_recv(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Convert bytea representation to halfvec
+ */
+FUNCTION_PREFIX PG_FUNCTION_INFO_V1(bytea_to_halfvec);
+Datum
+bytea_to_halfvec(PG_FUNCTION_ARGS)
+{
+	bytea* raw = PG_GETARG_BYTEA_PP(0);
+	StringInfo	buf = makeStringInfo();
+	HalfVector *result;
+	int16		dim;
+	int16		unused;
+
+	/*
+	 * Copy the bytea data into StringInfo, so we can process it just like
+	 * halfvec_recv
+	 */
+	buf->len = buf->maxlen = VARSIZE_ANY(raw);
+	buf->data = VARDATA_ANY(raw);
+
+	dim = pq_getmsgint(buf, sizeof(int16));
+	unused = pq_getmsgint(buf, sizeof(int16));
+
+	CheckDim(dim);
+
+	if (unused != 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("expected unused to be 0, not %d", unused)));
+
+	result = InitHalfVector(dim);
+	for (int i = 0; i < dim; i++)
+	{
+		result->x[i] = pq_getmsghalf(buf);
+		CheckElement(result->x[i]);
+	}
+
+	PG_RETURN_POINTER(result);
+}
+
+/*
  * Convert internal representation to the external binary representation
  */
 FUNCTION_PREFIX PG_FUNCTION_INFO_V1(halfvec_send);

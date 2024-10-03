@@ -411,6 +411,46 @@ vector_recv(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Convert bytea representation to vecvtor
+ */
+FUNCTION_PREFIX PG_FUNCTION_INFO_V1(bytea_to_vector);
+Datum
+bytea_to_vector(PG_FUNCTION_ARGS)
+{
+	bytea* raw = PG_GETARG_BYTEA_PP(0);
+	StringInfo	buf = makeStringInfo();
+	Vector	   *result;
+	int16		dim;
+	int16		unused;
+
+	/*
+	 * Copy the bytea data into StringInfo, so we can process it just like
+	 * sparsevec_recv
+	 */
+	buf->len = buf->maxlen = VARSIZE_ANY(raw);
+	buf->data = VARDATA_ANY(raw);
+
+	dim = pq_getmsgint(buf, sizeof(int16));
+	unused = pq_getmsgint(buf, sizeof(int16));
+
+	CheckDim(dim);
+
+	if (unused != 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("expected unused to be 0, not %d", unused)));
+
+	result = InitVector(dim);
+	for (int i = 0; i < dim; i++)
+	{
+		result->x[i] = pq_getmsgfloat4(buf);
+		CheckElement(result->x[i]);
+	}
+
+	PG_RETURN_POINTER(result);
+}
+
+/*
  * Convert internal representation to the external binary representation
  */
 FUNCTION_PREFIX PG_FUNCTION_INFO_V1(vector_send);

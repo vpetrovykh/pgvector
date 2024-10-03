@@ -131,6 +131,9 @@ CREATE AGGREGATE sum(vector) (
 
 -- vector cast functions
 
+CREATE FUNCTION bytea_to_vector(bytea) RETURNS vector
+	AS 'MODULE_PATHNAME', 'bytea_to_vector' LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+
 CREATE FUNCTION vector(vector, integer, boolean) RETURNS vector
 	AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 
@@ -461,6 +464,9 @@ CREATE AGGREGATE sum(halfvec) (
 
 -- halfvec cast functions
 
+CREATE FUNCTION bytea_to_halfvec(bytea) RETURNS halfvec
+	AS 'MODULE_PATHNAME', 'bytea_to_halfvec' LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+
 CREATE FUNCTION halfvec(halfvec, integer, boolean) RETURNS halfvec
 	AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 
@@ -766,6 +772,15 @@ CREATE FUNCTION sparsevec_negative_inner_product(sparsevec, sparsevec) RETURNS f
 	AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 
 -- sparsevec cast functions
+
+CREATE FUNCTION bytea_to_sparsevec(bytea) RETURNS sparsevec
+	AS 'MODULE_PATHNAME', 'bytea_to_sparsevec' LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+
+CREATE FUNCTION sparsevec_to_text(sparsevec) RETURNS text
+	AS 'MODULE_PATHNAME', 'sparsevec_to_text' LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+
+CREATE FUNCTION text_to_sparsevec(text) RETURNS sparsevec
+	AS 'MODULE_PATHNAME', 'text_to_sparsevec' LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 
 CREATE FUNCTION sparsevec(sparsevec, integer, boolean) RETURNS sparsevec
 	AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
